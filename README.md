@@ -237,38 +237,74 @@ docker compose logs -f client api api-worker nwsalerts
 
 ### Verified rollout patterns
 
-Conversation persistence rollout from a Mac development checkout to `nws`:
+Git-based rollout on `nws` is the standard path. Push code to GitHub first, then update the live Pi checkouts from GitHub and rebuild from there.
+
+One-time GitHub key copy from the Mac to `nws`:
 
 ```bash
-cd /Users/benjaminvassmer/development/weather-llm-iac
-rsync -av ../weather-llm-api/prisma/ pi@192.168.6.87:/home/pi/development/weather-stack/weather-llm-api/prisma/
-rsync -av ../weather-llm-api/src/api/nws-answer/ pi@192.168.6.87:/home/pi/development/weather-stack/weather-llm-api/src/api/nws-answer/
-rsync -av ../weather-llm/src/pages/PromptPage.tsx pi@192.168.6.87:/home/pi/development/weather-stack/weather-llm/src/pages/PromptPage.tsx
+scp ~/.ssh/github ~/.ssh/github.pub pi@192.168.6.87:/home/pi/.ssh/
 ssh pi@192.168.6.87 '
-set -e
-cd /home/pi/development/weather-stack/weather-llm-iac
-sudo docker-compose up -d --no-deps --force-recreate api api-worker client
-curl -f http://127.0.0.1:3000/health
-curl -f http://127.0.0.1:3000/nws-alerts/conversation/latest
+set -eu
+chmod 600 ~/.ssh/github
+chmod 644 ~/.ssh/github.pub
+ssh -i ~/.ssh/github -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com </dev/null || test $? -eq 1
 '
 ```
 
-Client-only Prompt page rollout on `nws`:
+One-time migration from plain directories to Git checkouts on `nws`:
 
 ```bash
-cd /Users/benjaminvassmer/development/weather-llm-iac
-rsync -av ../weather-llm/src/pages/PromptPage.tsx pi@192.168.6.87:/home/pi/development/weather-stack/weather-llm/src/pages/PromptPage.tsx
 ssh pi@192.168.6.87 '
-set -e
-cd /home/pi/development/weather-stack/weather-llm-iac
-sudo docker-compose restart client
+set -eu
+mkdir -p /home/pi/development/weather-stack
+cd /home/pi/development/weather-stack
+timestamp=$(date +%Y%m%d%H%M%S)
+for dir in weather-llm-iac nwsAlerts weather-llm-api weather-llm; do
+	if [ -e "$dir" ] && [ ! -d "$dir/.git" ]; then
+		mv "$dir" "${dir}.pre-git-${timestamp}"
+	fi
+done
+if [ ! -d weather-llm-iac/.git ]; then
+	git clone git@github.com:bvassmer/weather-llm-iac.git weather-llm-iac
+fi
+cd weather-llm-iac
+sh ./scripts/deploy_nws_from_git.sh full
 '
 ```
 
-Rebuild a single service after a code change:
+The deploy script expects clean Git checkouts on `main`, clones missing sibling repos, and aborts if it finds a dirty checkout or a plain directory that still needs to be migrated.
+
+Targeted Git-based deploys on `nws`:
 
 ```bash
-docker compose up -d --build --no-deps --force-recreate nwsalerts
+ssh pi@192.168.6.87 '
+set -eu
+cd /home/pi/development/weather-stack/weather-llm-iac
+sh ./scripts/deploy_nws_from_git.sh api
+'
+```
+
+```bash
+ssh pi@192.168.6.87 '
+set -eu
+cd /home/pi/development/weather-stack/weather-llm-iac
+sh ./scripts/deploy_nws_from_git.sh client
+'
+```
+
+```bash
+ssh pi@192.168.6.87 '
+set -eu
+cd /home/pi/development/weather-stack/weather-llm-iac
+sh ./scripts/deploy_nws_from_git.sh nwsalerts
+'
+```
+
+Break-glass direct compose rebuild if the Git checkout is already current on the Pi:
+
+```bash
+cd /home/pi/development/weather-stack/weather-llm-iac
+sudo docker-compose up -d --build --no-deps --force-recreate nwsalerts
 ```
 
 Stop the stack:

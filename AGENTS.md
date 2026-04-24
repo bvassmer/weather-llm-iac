@@ -18,6 +18,7 @@
 
 - Keep browser and container URLs explicit. Use `http://192.168.6.87:3000` for `VITE_WEATHER_LLM_API_BASE_URL` and a routable IP such as `http://192.168.7.176:11434` for `OLLAMA_BASE_URL`.
 - Do not rely on `.local` hostnames inside containers. Use a routable LAN IP or normal DNS name.
+- On `nws`, keep `/home/pi/development/weather-stack/weather-llm-iac`, `/home/pi/development/weather-stack/nwsAlerts`, `/home/pi/development/weather-stack/weather-llm-api`, and `/home/pi/development/weather-stack/weather-llm` as Git checkouts on `main`; do not deploy by syncing source files into plain directories.
 - On `nws`, use `sudo docker-compose ...`; plain `docker-compose` has hit Docker socket permission failures.
 - `nwsalerts` targeted deploys are only safe when `nwsalerts-mariadb` is already healthy because startup runs `prisma db push`.
 
@@ -29,10 +30,14 @@
 
 ## Deploy Commands
 
-- Full `nws` stack: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up --build -d`
-- UI only: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up -d --build --no-deps --force-recreate client`
-- API only: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up -d --build --no-deps --force-recreate api api-worker`
-- `nwsalerts` only: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up -d --build --no-deps --force-recreate nwsalerts`
+- Git-based full `nws` deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh full`
+- Git-based UI deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh client`
+- Git-based API deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh api`
+- Git-based `nwsalerts` deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh nwsalerts`
+- Break-glass raw full `nws` stack: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up --build -d`
+- Break-glass raw UI deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up -d --build --no-deps --force-recreate client`
+- Break-glass raw API deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up -d --build --no-deps --force-recreate api api-worker`
+- Break-glass raw `nwsalerts` deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sudo docker-compose up -d --build --no-deps --force-recreate nwsalerts`
 - `ai-hub` repo sync target: `/home/bvassmer/dev/rPiAiHub`
 - `ai-hub` nginx apply: `sudo cp config/nginx/ai-appliance.conf /etc/nginx/sites-available/ai-appliance.conf && sudo nginx -t && sudo systemctl reload nginx`
 
