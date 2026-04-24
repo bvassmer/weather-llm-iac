@@ -101,7 +101,6 @@ Then update the values that define how the two Pis talk to each other.
 | `NWS_EMBEDDING_MODEL`           | `Xenova/all-MiniLM-L6-v2`                | Local embedding model downloaded by `weather-llm-api`                       |
 | `QDRANT_VECTOR_SIZE`            | `384`                                    | Must match the embedding model output dimension                             |
 | `QDRANT_COLLECTION_NWS_ALERTS`  | `nws_alerts_embeddings_v1`               | Main collection for stored weather vectors                                  |
-| `ALERT_EMAIL_ENABLED`           | `true` to send email, `false` to disable | Enables alert email delivery from `nwsalerts`                               |
 | `ALERT_EMAIL_TO`                | `bvassmer@gmail.com`                     | Where important weather emails are delivered                                |
 
 Notes:
@@ -146,7 +145,6 @@ OLLAMA_BASE_URL=http://192.168.7.176:11434
 VITE_WEATHER_LLM_API_BASE_URL=http://192.168.6.87:3000
 CORS_ORIGIN=http://192.168.6.87:5173
 
-ALERT_EMAIL_ENABLED=true
 ALERT_EMAIL_TO=bvassmer@gmail.com
 ALERT_EMAIL_USER=your-smtp-user
 ALERT_EMAIL_PASS=your-smtp-password
