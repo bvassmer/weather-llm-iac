@@ -1,1 +1,5 @@
 .env
+.env.bak
+.env.bak.*
+.env.copilot-backup-*
+.env.layout-backup-*
