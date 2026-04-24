@@ -245,9 +245,11 @@ One-time GitHub key copy from the Mac to `nws`:
 scp ~/.ssh/github ~/.ssh/github.pub pi@192.168.6.87:/home/pi/.ssh/
 ssh pi@192.168.6.87 '
 set -eu
-chmod 600 ~/.ssh/github
-chmod 644 ~/.ssh/github.pub
-ssh -i ~/.ssh/github -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com </dev/null || test $? -eq 1
+cp ~/.ssh/github ~/.ssh/id_github
+cp ~/.ssh/github.pub ~/.ssh/id_github.pub
+chmod 600 ~/.ssh/id_github
+chmod 644 ~/.ssh/id_github.pub
+ssh -i ~/.ssh/id_github -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com </dev/null || test $? -eq 1
 '
 ```
 

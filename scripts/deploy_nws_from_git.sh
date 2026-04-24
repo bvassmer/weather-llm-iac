@@ -5,10 +5,10 @@ set -eu
 STACK_ROOT="${STACK_ROOT:-/home/pi/development/weather-stack}"
 IAC_DIR="${IAC_DIR:-$STACK_ROOT/weather-llm-iac}"
 DEFAULT_BRANCH="main"
-GITHUB_SSH_KEY_PATH="${GITHUB_SSH_KEY_PATH:-$HOME/.ssh/github}"
+GITHUB_SSH_KEY_PATH="${GITHUB_SSH_KEY_PATH:-$HOME/.ssh/id_github}"
 
 WEATHER_LLM_IAC_URL="git@github.com:bvassmer/weather-llm-iac.git"
-NWS_ALERTS_URL="git@github.com:bvassmer/nws-alerts.git"
+NWS_ALERTS_URL="git@github.com:bvassmer/rPiWx.git"
 WEATHER_LLM_API_URL="git@github.com:bvassmer/weather-llm-api.git"
 WEATHER_LLM_URL="git@github.com:bvassmer/weather-llm.git"
 
@@ -34,7 +34,7 @@ Targets:
 Environment overrides:
   STACK_ROOT  Defaults to /home/pi/development/weather-stack.
   IAC_DIR     Defaults to $STACK_ROOT/weather-llm-iac.
-  GITHUB_SSH_KEY_PATH  Defaults to $HOME/.ssh/github.
+  GITHUB_SSH_KEY_PATH  Defaults to $HOME/.ssh/id_github.
 
 Before the first deploy, copy the GitHub SSH key you want to use onto the Pi and
 set its permissions to 600.
