@@ -79,7 +79,7 @@ This Compose stack is currently the deployment entry point for the `nws` machine
 | `nwsalerts-mariadb` | `3307`         | Relational data store for `nwsalerts`                                     |
 | `nwsalerts`         | none           | Background weather ingestion, email alerts, and embedding outbox dispatch |
 
-This stack uses bind mounts and development-style startup commands (`npm install`, watch mode, live reload). It works well for a personal LAN deployment and active development, but it is not a hardened production packaging strategy.
+This stack now uses image-based service startup on `nws`: the API and worker run prebuilt Node artifacts, the browser client is served as a built SPA from nginx, and schema work runs as explicit one-shot services before the long-running containers are recreated.
 
 ## Key configuration
 
@@ -91,17 +91,17 @@ cp .env.example .env
 
 Then update the values that define how the two Pis talk to each other.
 
-| Variable                        | Recommended value for this deployment    | Why it matters                                                              |
-| ------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------- |
-| `OLLAMA_BASE_URL`               | `http://192.168.7.176:11434`             | Points API generation requests at `ai-hub`                                  |
-| `OLLAMA_CHAT_BASE_URL`          | optional override                        | Use only if generation is exposed on a different URL than `OLLAMA_BASE_URL` |
-| `OLLAMA_CHAT_MODEL`             | `qwen3:1.7b` or your validated model     | Controls the answer-generation model                                        |
-| `VITE_WEATHER_LLM_API_BASE_URL` | `http://192.168.6.87:3000`               | Browser-side API base URL used by the UI                                    |
-| `CORS_ORIGIN`                   | `http://192.168.6.87:5173`               | Allows the browser UI to call the API                                       |
-| `NWS_EMBEDDING_MODEL`           | `Xenova/all-MiniLM-L6-v2`                | Local embedding model downloaded by `weather-llm-api`                       |
-| `QDRANT_VECTOR_SIZE`            | `384`                                    | Must match the embedding model output dimension                             |
-| `QDRANT_COLLECTION_NWS_ALERTS`  | `nws_alerts_embeddings_v1`               | Main collection for stored weather vectors                                  |
-| `ALERT_EMAIL_TO`                | `bvassmer@gmail.com`                     | Where important weather emails are delivered                                |
+| Variable                        | Recommended value for this deployment | Why it matters                                                              |
+| ------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| `OLLAMA_BASE_URL`               | `http://192.168.7.176:11434`          | Points API generation requests at `ai-hub`                                  |
+| `OLLAMA_CHAT_BASE_URL`          | optional override                     | Use only if generation is exposed on a different URL than `OLLAMA_BASE_URL` |
+| `OLLAMA_CHAT_MODEL`             | `qwen3:1.7b` or your validated model  | Controls the answer-generation model                                        |
+| `VITE_WEATHER_LLM_API_BASE_URL` | `http://192.168.6.87:3000`            | Browser-side API base URL used by the UI                                    |
+| `CORS_ORIGIN`                   | `http://192.168.6.87:5173`            | Allows the browser UI to call the API                                       |
+| `NWS_EMBEDDING_MODEL`           | `Xenova/all-MiniLM-L6-v2`             | Local embedding model downloaded by `weather-llm-api`                       |
+| `QDRANT_VECTOR_SIZE`            | `384`                                 | Must match the embedding model output dimension                             |
+| `QDRANT_COLLECTION_NWS_ALERTS`  | `nws_alerts_embeddings_v1`            | Main collection for stored weather vectors                                  |
+| `ALERT_EMAIL_TO`                | `bvassmer@gmail.com`                  | Where important weather emails are delivered                                |
 
 Notes:
 
@@ -162,7 +162,9 @@ QDRANT_VECTOR_SIZE=384
 ### 3. Start the stack on `nws`
 
 ```bash
-docker compose up --build -d
+docker compose up --build -d postgres qdrant nwsalerts-mariadb ollama-preflight
+docker compose up --build api-migrate nwsalerts-schema
+docker compose up --build -d api api-worker client nwsalerts
 ```
 
 The Compose stack starts:
@@ -174,7 +176,7 @@ The Compose stack starts:
 - the `weather-llm-api` API and worker
 - the `weather-llm` UI
 
-The `api` and `api-worker` startup commands already run `npm run prisma:generate` and `npm run prisma:migrate:deploy`, so checked-in PostgreSQL migrations are applied automatically when those containers are recreated.
+Before the API and ingestion services start, the one-shot `api-migrate` and `nwsalerts-schema` services apply the checked-in PostgreSQL migrations and the current MariaDB Prisma schema.
 
 ### 4. Ollama preflight behavior
 
@@ -236,6 +238,60 @@ docker compose logs -f client api api-worker nwsalerts
 ### Verified rollout patterns
 
 Git-based rollout on `nws` is the standard path. Push code to GitHub first, then update the live Pi checkouts from GitHub and rebuild from there.
+
+The deploy wrapper now supports two execution modes:
+
+- Pi-local builds: the default path, which rebuilds images on `nws`.
+- Prebuilt images: set `PREFER_PREBUILT_IMAGES=true` and provide image refs in `.env` to switch the wrapper to `docker-compose pull` plus recreate, while keeping the same Git-first orchestration and explicit schema steps.
+
+### Local registry on `nws`
+
+The preferred image-based path on the LAN is now a local Docker registry hosted on `nws`.
+
+One-time setup on `nws`:
+
+```bash
+ssh pi@192.168.6.87 '
+set -eu
+cd /home/pi/development/weather-stack/weather-llm-iac
+sh ./scripts/setup_local_registry_on_nws.sh
+'
+```
+
+That helper configures Docker to trust `LOCAL_REGISTRY_HOST:LOCAL_REGISTRY_PORT` as an insecure LAN registry, then starts the Compose `registry` service.
+
+Publish fresh images from a build machine:
+
+```bash
+cd /Users/benjaminvassmer/development/weather-llm-iac
+IMAGE_TAG=$(git -C ../weather-llm-api rev-parse --short HEAD) \
+VITE_WEATHER_LLM_API_BASE_URL=http://192.168.6.87:3000 \
+sh ./scripts/publish_images_to_registry.sh
+```
+
+Then set `.env` on `nws` for prebuilt-image deploys:
+
+```bash
+PREFER_PREBUILT_IMAGES=true
+LOCAL_REGISTRY_HOST=192.168.6.87
+LOCAL_REGISTRY_PORT=5000
+WEATHER_LLM_API_IMAGE=192.168.6.87:5000/weather-llm-api:latest
+WEATHER_LLM_CLIENT_IMAGE=192.168.6.87:5000/weather-llm-client:latest
+WEATHER_LLM_NWSALERTS_IMAGE=192.168.6.87:5000/weather-llm-nwsalerts:latest
+```
+
+Once the images are published, deploy normally through the Git wrapper:
+
+```bash
+ssh pi@192.168.6.87 '
+set -eu
+cd /home/pi/development/weather-stack/weather-llm-iac
+sh ./scripts/deploy_nws_from_git.sh registry
+sh ./scripts/deploy_nws_from_git.sh full
+'
+```
+
+The same wrapper still supports targeted `api`, `client`, and `nwsalerts` deploys. In prebuilt-image mode it starts the local registry first when the configured image refs point at `nws`.
 
 One-time GitHub key copy from the Mac to `nws`:
 
@@ -325,4 +381,4 @@ Operational notes:
 - `weather-llm-api` is the component that creates weather embeddings and writes them to Qdrant.
 - `weather-llm` is only the user interface; all retrieval and answer generation happen behind it.
 - If you change the embedding model, update `QDRANT_VECTOR_SIZE` to match the new model output dimension before writing more vectors.
-- Because this stack uses bind mounts and dev-mode commands, unexpected container startup issues are often solved by checking service logs first rather than assuming the code path changed.
+- The local-registry path is intentionally LAN-local and insecure by default. If you need cross-network or untrusted-network access, switch to TLS before exposing it more broadly.

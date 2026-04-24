@@ -6,6 +6,8 @@ STACK_ROOT="${STACK_ROOT:-/home/pi/development/weather-stack}"
 IAC_DIR="${IAC_DIR:-$STACK_ROOT/weather-llm-iac}"
 DEFAULT_BRANCH="main"
 GITHUB_SSH_KEY_PATH="${GITHUB_SSH_KEY_PATH:-$HOME/.ssh/id_github}"
+COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-$IAC_DIR/.env}"
+PREFER_PREBUILT_IMAGES="${PREFER_PREBUILT_IMAGES:-false}"
 
 WEATHER_LLM_IAC_URL="git@github.com:bvassmer/weather-llm-iac.git"
 NWS_ALERTS_URL="git@github.com:bvassmer/rPiWx.git"
@@ -14,6 +16,18 @@ WEATHER_LLM_URL="git@github.com:bvassmer/weather-llm.git"
 
 info() {
   echo ">>> $*"
+}
+
+section_start() {
+  date +%s
+}
+
+section_end() {
+  section_name="$1"
+  started_at="$2"
+  finished_at="$(date +%s)"
+  elapsed="$((finished_at - started_at))"
+  info "$section_name completed in ${elapsed}s"
 }
 
 fail() {
@@ -26,6 +40,7 @@ usage() {
 Usage: ./scripts/deploy_nws_from_git.sh <target>
 
 Targets:
+  registry   Update weather-llm-iac, then recreate the local image registry.
   full       Update weather-llm-iac, nwsAlerts, weather-llm-api, and weather-llm, then rebuild the full stack.
   api        Update weather-llm-iac and weather-llm-api, then recreate api and api-worker.
   client     Update weather-llm-iac and weather-llm, then recreate client.
@@ -47,6 +62,15 @@ require_command() {
 
 require_file() {
   [ -f "$1" ] || fail "Required file not found: $1"
+}
+
+load_compose_env() {
+  if [ -f "$COMPOSE_ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$COMPOSE_ENV_FILE"
+    set +a
+  fi
 }
 
 git_ssh_command() {
@@ -142,29 +166,8 @@ require_healthy_mariadb() {
     fail "weather-llm-nwsalerts-mariadb must be healthy before deploying nwsalerts (current: ${health_status:-missing})."
 }
 
-run_compose() {
-  target="$1"
-
-  [ -d "$IAC_DIR/.git" ] || fail "weather-llm-iac checkout not found at $IAC_DIR."
-
-  case "$target" in
-    full)
-      compose_command="sudo docker-compose up --build -d"
-      ;;
-    api)
-      compose_command="sudo docker-compose up -d --build --no-deps --force-recreate api api-worker"
-      ;;
-    client)
-      compose_command="sudo docker-compose up -d --build --no-deps --force-recreate client"
-      ;;
-    nwsalerts)
-      require_healthy_mariadb
-      compose_command="sudo docker-compose up -d --build --no-deps --force-recreate nwsalerts"
-      ;;
-    *)
-      fail "Unsupported deploy target: $target"
-      ;;
-  esac
+run_compose_command() {
+  compose_command="$1"
 
   info "Running $compose_command"
   (
@@ -173,12 +176,131 @@ run_compose() {
   )
 }
 
+build_flag() {
+  if [ "$PREFER_PREBUILT_IMAGES" = "true" ]; then
+    printf '%s' ""
+  else
+    printf '%s' " --build"
+  fi
+}
+
+local_registry_endpoint() {
+  printf '%s' "${LOCAL_REGISTRY_HOST:-192.168.6.87}:${LOCAL_REGISTRY_PORT:-5000}"
+}
+
+uses_local_registry() {
+  registry_endpoint="$(local_registry_endpoint)"
+
+  for image_ref in \
+    "${WEATHER_LLM_API_IMAGE:-}" \
+    "${WEATHER_LLM_CLIENT_IMAGE:-}" \
+    "${WEATHER_LLM_NWSALERTS_IMAGE:-}"
+  do
+    case "$image_ref" in
+      "$registry_endpoint"/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+ensure_local_registry() {
+  run_compose_command "sudo docker-compose up -d registry"
+}
+
+pull_target_images() {
+  target="$1"
+
+  if [ "$PREFER_PREBUILT_IMAGES" != "true" ]; then
+    return
+  fi
+
+  if uses_local_registry; then
+    ensure_local_registry
+  fi
+
+  case "$target" in
+    registry)
+      return
+      ;;
+    full)
+      run_compose_command "sudo docker-compose pull api api-migrate api-worker client nwsalerts nwsalerts-schema"
+      ;;
+    api)
+      run_compose_command "sudo docker-compose pull api api-migrate api-worker"
+      ;;
+    client)
+      run_compose_command "sudo docker-compose pull client"
+      ;;
+    nwsalerts)
+      run_compose_command "sudo docker-compose pull nwsalerts nwsalerts-schema"
+      ;;
+    *)
+      fail "Unsupported deploy target: $target"
+      ;;
+  esac
+}
+
+run_api_schema_step() {
+  run_compose_command "sudo docker-compose up -d postgres"
+  run_compose_command "sudo docker-compose up$(build_flag) api-migrate"
+}
+
+run_nwsalerts_schema_step() {
+  require_healthy_mariadb
+  run_compose_command "sudo docker-compose up$(build_flag) nwsalerts-schema"
+}
+
+run_compose() {
+  target="$1"
+
+  [ -d "$IAC_DIR/.git" ] || fail "weather-llm-iac checkout not found at $IAC_DIR."
+
+  case "$target" in
+    registry)
+      compose_command="sudo docker-compose up -d registry"
+      ;;
+    full)
+      pull_target_images "$target"
+      run_compose_command "sudo docker-compose up -d postgres qdrant nwsalerts-mariadb ollama-preflight"
+      run_api_schema_step
+      run_nwsalerts_schema_step
+      compose_command="sudo docker-compose up$(build_flag) -d api api-worker client nwsalerts"
+      ;;
+    api)
+      pull_target_images "$target"
+      run_compose_command "sudo docker-compose up -d postgres qdrant nwsalerts-mariadb ollama-preflight"
+      run_api_schema_step
+      compose_command="sudo docker-compose up -d$(build_flag) --no-deps --force-recreate api api-worker"
+      ;;
+    client)
+      pull_target_images "$target"
+      compose_command="sudo docker-compose up -d$(build_flag) --no-deps --force-recreate client"
+      ;;
+    nwsalerts)
+      pull_target_images "$target"
+      run_nwsalerts_schema_step
+      compose_command="sudo docker-compose up -d$(build_flag) --no-deps --force-recreate nwsalerts"
+      ;;
+    *)
+      fail "Unsupported deploy target: $target"
+      ;;
+  esac
+
+  run_compose_command "$compose_command"
+}
+
 update_for_target() {
   target="$1"
+  started_at="$(section_start)"
 
   update_repo "weather-llm-iac" "$IAC_DIR" "$WEATHER_LLM_IAC_URL"
 
   case "$target" in
+    registry)
+      ;;
     full)
       update_repo "nwsAlerts" "$STACK_ROOT/nwsAlerts" "$NWS_ALERTS_URL"
       update_repo "weather-llm-api" "$STACK_ROOT/weather-llm-api" "$WEATHER_LLM_API_URL"
@@ -197,6 +319,8 @@ update_for_target() {
       fail "Unsupported deploy target: $target"
       ;;
   esac
+
+  section_end "Git update for $target" "$started_at"
 }
 
 main() {
@@ -208,7 +332,7 @@ main() {
   target="$1"
 
   case "$target" in
-    full|api|client|nwsalerts)
+    registry|full|api|client|nwsalerts)
       ;;
     -h|--help|help)
       usage
@@ -225,9 +349,14 @@ main() {
   require_command sudo
   require_command docker-compose
 
+  load_compose_env
+  deploy_started_at="$(section_start)"
   check_github_auth
   update_for_target "$target"
+  compose_started_at="$(section_start)"
   run_compose "$target"
+  section_end "Compose recreate for $target" "$compose_started_at"
+  section_end "Total deploy for $target" "$deploy_started_at"
   info "Deploy completed for target: $target"
 }
 
