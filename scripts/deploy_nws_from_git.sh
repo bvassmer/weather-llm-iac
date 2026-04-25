@@ -7,6 +7,7 @@ IAC_DIR="${IAC_DIR:-$STACK_ROOT/weather-llm-iac}"
 DEFAULT_BRANCH="main"
 GITHUB_SSH_KEY_PATH="${GITHUB_SSH_KEY_PATH:-$HOME/.ssh/id_github}"
 COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-$IAC_DIR/.env}"
+COMPOSE_ENV_LOCAL_FILE="${COMPOSE_ENV_LOCAL_FILE:-$IAC_DIR/.env.local}"
 PREFER_PREBUILT_IMAGES="${PREFER_PREBUILT_IMAGES:-false}"
 
 WEATHER_LLM_IAC_URL="git@github.com:bvassmer/weather-llm-iac.git"
@@ -69,6 +70,13 @@ load_compose_env() {
     set -a
     # shellcheck disable=SC1090
     . "$COMPOSE_ENV_FILE"
+    set +a
+  fi
+
+  if [ -f "$COMPOSE_ENV_LOCAL_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$COMPOSE_ENV_LOCAL_FILE"
     set +a
   fi
 }

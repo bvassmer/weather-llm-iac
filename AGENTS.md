@@ -79,6 +79,7 @@ All four main containers (`weather-llm-nwsalerts`, `weather-llm-client`, `weathe
 - Resolve by running a fresh publish on `nws` after pulling latest checkouts:
   - `sudo sh /home/pi/development/weather-stack/weather-llm-iac/scripts/publish_images_to_registry.sh`
   - then `sh ./scripts/deploy_nws_from_git.sh <target>`
+  - choose target by changed repo: `weather-llm -> client`, `weather-llm-api -> api`, `nwsAlerts -> nwsalerts`, cross-service -> `full`
 - Validate by endpoint behavior (for example, preview payload grep checks), not only by container health.
 
 ## Deploy Commands

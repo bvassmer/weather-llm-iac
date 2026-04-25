@@ -5,6 +5,26 @@ set -eu
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 IAC_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE_ROOT="$(CDPATH= cd -- "$IAC_DIR/.." && pwd)"
+COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-$IAC_DIR/.env}"
+COMPOSE_ENV_LOCAL_FILE="${COMPOSE_ENV_LOCAL_FILE:-$IAC_DIR/.env.local}"
+
+load_env_file() {
+  env_file="$1"
+  if [ -f "$env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$env_file"
+    set +a
+  fi
+}
+
+load_env_files() {
+  load_env_file "$COMPOSE_ENV_FILE"
+  load_env_file "$COMPOSE_ENV_LOCAL_FILE"
+}
+
+load_env_files
+
 LOCAL_REGISTRY_HOST="${LOCAL_REGISTRY_HOST:-192.168.6.87}"
 LOCAL_REGISTRY_PORT="${LOCAL_REGISTRY_PORT:-5000}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"

@@ -89,6 +89,11 @@ Copy the environment file first:
 cp .env.example .env
 ```
 
+To keep host-specific values from being overwritten by Git-based deploy updates,
+put persistent overrides in `.env.local` (same `KEY=VALUE` format). The deploy
+wrapper and image publish script load `.env` first and `.env.local` second, so
+`.env.local` takes precedence when both define the same key.
+
 Then update the values that define how the two Pis talk to each other.
 
 | Variable                        | Recommended value for this deployment | Why it matters                                                              |
@@ -109,6 +114,14 @@ Notes:
 - Keep `VITE_WEATHER_LLM_API_BASE_URL` explicit. Browser-side values are easiest to reason about when they match the real LAN address of `nws`.
 - `weather-llm-api` generates embeddings in-process. Ollama on `ai-hub` is currently used for answer generation, not for weather document embeddings.
 - On first boot, `weather-llm-api` downloads the embedding model into the shared cache mounted at `NWS_EMBEDDING_CACHE_DIR`. The cache is reused by both the API and worker containers.
+- For image-based deploys, keep `PREFER_PREBUILT_IMAGES`, registry settings, and image refs in `.env` or `.env.local` so deploy and publish scripts resolve the same values.
+
+### Qwen3 Considerations
+
+- Use `OLLAMA_CHAT_MODEL=qwen3:1.7b` as the default on this stack unless you are intentionally rolling back.
+- Keep `qwen2.5:1.5b` installed on `ai-hub` for rollback-only scenarios.
+- Current weather services use conservative temperatures for deterministic behavior. This maps to Qwen3 non-thinking style usage.
+- If you introduce explicit Qwen3 thinking-mode behavior later, update API-side generation settings to Qwen3-appropriate sampling values rather than reusing the current cold defaults.
 
 ## First-time deployment
 
@@ -318,9 +331,16 @@ Use this checklist whenever behavior does not match the commit you pushed:
 
 1. Confirm Pi checkouts were updated before publishing (`git pull --ff-only` in `weather-llm-iac` and app repos).
 2. Run `sudo sh ./scripts/publish_images_to_registry.sh` on `nws`.
-3. Confirm the publish output shows a fresh `weather-llm-nwsalerts` image build and push.
-4. Run `sh ./scripts/deploy_nws_from_git.sh nwsalerts` (or `full`) immediately after publish.
+3. Confirm the publish output shows fresh build/push output for the service you changed (`weather-llm-client`, `weather-llm-api`, or `weather-llm-nwsalerts`).
+4. Run `sh ./scripts/deploy_nws_from_git.sh <target>` immediately after publish (`client`, `api`, `nwsalerts`, or `full`).
 5. Validate runtime behavior through endpoint checks, not only container status.
+
+Quick target mapping:
+
+- `weather-llm` UI change -> publish images -> `sh ./scripts/deploy_nws_from_git.sh client`
+- `weather-llm-api` change -> publish images -> `sh ./scripts/deploy_nws_from_git.sh api`
+- `nwsAlerts` change -> publish images -> `sh ./scripts/deploy_nws_from_git.sh nwsalerts`
+- Cross-service changes -> publish images -> `sh ./scripts/deploy_nws_from_git.sh full`
 
 Example runtime check used for SPC narrative validation:
 
@@ -328,6 +348,13 @@ Example runtime check used for SPC narrative validation:
 curl -s http://192.168.6.87:3000/nws-alerts/admin/email-templates/preview \
 	-X POST -H "Content-Type: application/json" -d '{}' > /tmp/preview.json
 grep -q "SPC Narrative" /tmp/preview.json && echo "SPC Narrative found: Yes" || echo "SPC Narrative found: No"
+```
+
+Example runtime check for client deployments:
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 \
+	'sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep weather-llm-client'
 ```
 
 ### `.env` for prebuilt-image mode
