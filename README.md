@@ -260,16 +260,79 @@ sh ./scripts/setup_local_registry_on_nws.sh
 
 That helper configures Docker to trust `LOCAL_REGISTRY_HOST:LOCAL_REGISTRY_PORT` as an insecure LAN registry, then starts the Compose `registry` service.
 
-Publish fresh images from a build machine:
+### Full image rebuild workflow
+
+This is the standard path when you have pushed code changes to GitHub and want to rebuild all three service images and deploy them.
+
+**Prerequisites**: the Pi checkouts must be at the correct HEAD. The deploy wrapper handles git-pulling each checkout, so running it before the publish step is the simplest way to advance them.
+
+**Step 1 — Push your changes to GitHub from the Mac (required before anything on the Pi).**
+
+**Step 2 — SSH to `nws` and rebuild all images with `sudo`:**
 
 ```bash
-cd /Users/benjaminvassmer/development/weather-llm-iac
-IMAGE_TAG=$(git -C ../weather-llm-api rev-parse --short HEAD) \
-VITE_WEATHER_LLM_API_BASE_URL=http://192.168.6.87:3000 \
-sh ./scripts/publish_images_to_registry.sh
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 '
+set -e
+export GITHUB_SSH_KEY_PATH=$HOME/.ssh/id_github
+# Update all live checkouts to origin/main first
+cd /home/pi/development/weather-stack/weather-llm-iac
+export GIT_SSH_COMMAND="ssh -i $GITHUB_SSH_KEY_PATH -o IdentitiesOnly=yes"
+git pull --ff-only origin main
+for repo in nwsAlerts weather-llm-api weather-llm; do
+  git -C /home/pi/development/weather-stack/$repo pull --ff-only origin main
+done
+# Build and push all three images (sudo required for Docker socket)
+sudo sh ./scripts/publish_images_to_registry.sh
+'
 ```
 
-Then set `.env` on `nws` for prebuilt-image deploys:
+`publish_images_to_registry.sh` builds `linux/arm64` images directly on the Pi from the live checkout directories and pushes them to the local registry at `192.168.6.87:5000`. It **must** be run with `sudo` on `nws`; running it without `sudo` or from a non-arm64 build machine will fail.
+
+**Step 3 — Deploy the newly published images:**
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 '
+set -e
+export GITHUB_SSH_KEY_PATH=$HOME/.ssh/id_github
+cd /home/pi/development/weather-stack/weather-llm-iac
+sh ./scripts/deploy_nws_from_git.sh full
+'
+```
+
+The deploy wrapper re-pulls all Git checkouts, runs `docker-compose pull` to fetch the freshly published `:latest` images, runs schema migrations, and recreates the running containers.
+
+**Step 4 — Verify live container health:**
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 \
+  'sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep weather-llm'
+```
+
+All four main containers (`weather-llm-nwsalerts`, `weather-llm-client`, `weather-llm-api`, `weather-llm-api-worker`) should show `(healthy)`.
+
+### Avoid stale `:latest` deploys
+
+`deploy_nws_from_git.sh` does not build images. In prebuilt-image mode it pulls what already exists in the local registry, then recreates containers. If `:latest` was not republished from current source, deploy can succeed while still running old code.
+
+Use this checklist whenever behavior does not match the commit you pushed:
+
+1. Confirm Pi checkouts were updated before publishing (`git pull --ff-only` in `weather-llm-iac` and app repos).
+2. Run `sudo sh ./scripts/publish_images_to_registry.sh` on `nws`.
+3. Confirm the publish output shows a fresh `weather-llm-nwsalerts` image build and push.
+4. Run `sh ./scripts/deploy_nws_from_git.sh nwsalerts` (or `full`) immediately after publish.
+5. Validate runtime behavior through endpoint checks, not only container status.
+
+Example runtime check used for SPC narrative validation:
+
+```bash
+curl -s http://192.168.6.87:3000/nws-alerts/admin/email-templates/preview \
+	-X POST -H "Content-Type: application/json" -d '{}' > /tmp/preview.json
+grep -q "SPC Narrative" /tmp/preview.json && echo "SPC Narrative found: Yes" || echo "SPC Narrative found: No"
+```
+
+### `.env` for prebuilt-image mode
+
+Set these in `/home/pi/development/weather-stack/weather-llm-iac/.env` on `nws` to enable registry-backed deploys:
 
 ```bash
 PREFER_PREBUILT_IMAGES=true
@@ -278,17 +341,6 @@ LOCAL_REGISTRY_PORT=5000
 WEATHER_LLM_API_IMAGE=192.168.6.87:5000/weather-llm-api:latest
 WEATHER_LLM_CLIENT_IMAGE=192.168.6.87:5000/weather-llm-client:latest
 WEATHER_LLM_NWSALERTS_IMAGE=192.168.6.87:5000/weather-llm-nwsalerts:latest
-```
-
-Once the images are published, deploy normally through the Git wrapper:
-
-```bash
-ssh pi@192.168.6.87 '
-set -eu
-cd /home/pi/development/weather-stack/weather-llm-iac
-sh ./scripts/deploy_nws_from_git.sh registry
-sh ./scripts/deploy_nws_from_git.sh full
-'
 ```
 
 The same wrapper still supports targeted `api`, `client`, and `nwsalerts` deploys. In prebuilt-image mode it starts the local registry first when the configured image refs point at `nws`.

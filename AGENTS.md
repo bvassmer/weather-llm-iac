@@ -32,6 +32,55 @@
 - Changes in `rPi-5-ai` deploy to `ai-hub`.
 - Changes in `wx-modules` are not deployed alone. Rebuild and redeploy the consumer repo on `nws` after updating the shared package.
 
+## Image Rebuild Workflow
+
+Use this when you have pushed code changes to GitHub and need to rebuild and redeploy all three service images.
+
+**Step 1 — Push your changes to GitHub from the Mac first.**
+
+**Step 2 — SSH to `nws` and rebuild all images (must use `sudo`):**
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 '
+set -e
+export GITHUB_SSH_KEY_PATH=$HOME/.ssh/id_github
+export GIT_SSH_COMMAND="ssh -i $GITHUB_SSH_KEY_PATH -o IdentitiesOnly=yes"
+cd /home/pi/development/weather-stack/weather-llm-iac
+git pull --ff-only origin main
+for repo in nwsAlerts weather-llm-api weather-llm; do
+  git -C /home/pi/development/weather-stack/$repo pull --ff-only origin main
+done
+sudo sh ./scripts/publish_images_to_registry.sh
+'
+```
+
+`publish_images_to_registry.sh` builds `linux/arm64` images from the live Pi checkouts and pushes them to `192.168.6.87:5000`. It must be run with `sudo` on `nws`; without `sudo` it will fail with a Docker socket permission error.
+
+**Step 3 — Deploy the newly published images:**
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 \
+  'export GITHUB_SSH_KEY_PATH=$HOME/.ssh/id_github; cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh full'
+```
+
+**Step 4 — Verify live container health:**
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 \
+  'sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep weather-llm'
+```
+
+All four main containers (`weather-llm-nwsalerts`, `weather-llm-client`, `weather-llm-api`, `weather-llm-api-worker`) should show `(healthy)`.
+
+## Stale Image Troubleshooting
+
+- `deploy_nws_from_git.sh` updates Git checkouts and recreates services, but does not rebuild registry images.
+- If a deploy succeeds but behavior is old, assume `:latest` in the local registry is stale.
+- Resolve by running a fresh publish on `nws` after pulling latest checkouts:
+  - `sudo sh /home/pi/development/weather-stack/weather-llm-iac/scripts/publish_images_to_registry.sh`
+  - then `sh ./scripts/deploy_nws_from_git.sh <target>`
+- Validate by endpoint behavior (for example, preview payload grep checks), not only by container health.
+
 ## Deploy Commands
 
 - Git-based full `nws` deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh full`
@@ -39,6 +88,7 @@
 - Git-based UI deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh client`
 - Git-based API deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh api`
 - Git-based `nwsalerts` deploy: `cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh nwsalerts`
+- Rebuild and push all images to local registry (must use `sudo`): `export GITHUB_SSH_KEY_PATH=$HOME/.ssh/id_github && sudo sh /home/pi/development/weather-stack/weather-llm-iac/scripts/publish_images_to_registry.sh`
 - Git-based `ai-hub` full deploy: `cd /home/bvassmer/dev/rPiAiHub && sh ./scripts/deploy_ai_hub_from_git.sh full`
 - Git-based `ai-hub` appliance deploy: `cd /home/bvassmer/dev/rPiAiHub && sh ./scripts/deploy_ai_hub_from_git.sh appliance`
 - Git-based `ai-hub` nginx deploy: `cd /home/bvassmer/dev/rPiAiHub && sh ./scripts/deploy_ai_hub_from_git.sh nginx`
@@ -54,6 +104,7 @@
 - `nws` UI: `curl -I http://192.168.6.87:5173`
 - `nws` API: `curl http://192.168.6.87:3000/health`
 - `nws` latest conversation bootstrap: `curl http://192.168.6.87:3000/nws-alerts/conversation/latest`
+- `nws` live container health: `sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep weather-llm`
 - `ai-hub` models: `curl http://127.0.0.1:11434/api/tags`
 - `ai-hub` services: `systemctl is-active hailo-ai-appliance.service` and `systemctl is-active nginx`
 
