@@ -184,6 +184,20 @@ run_compose_command() {
   )
 }
 
+run_compose_command_allow_failure() {
+  compose_command="$1"
+
+  info "Running $compose_command"
+  set +e
+  (
+    cd "$IAC_DIR"
+    sh -c "$compose_command"
+  )
+  status=$?
+  set -e
+  return "$status"
+}
+
 build_flag() {
   if [ "$PREFER_PREBUILT_IMAGES" = "true" ]; then
     printf '%s' ""
@@ -220,6 +234,7 @@ ensure_local_registry() {
 
 pull_target_images() {
   target="$1"
+  pull_command=""
 
   if [ "$PREFER_PREBUILT_IMAGES" != "true" ]; then
     return
@@ -234,21 +249,40 @@ pull_target_images() {
       return
       ;;
     full)
-      run_compose_command "sudo docker-compose pull api api-migrate api-worker client nwsalerts nwsalerts-schema"
+      pull_command="sudo docker-compose pull api api-migrate api-worker client nwsalerts nwsalerts-schema"
       ;;
     api)
-      run_compose_command "sudo docker-compose pull api api-migrate api-worker"
+      pull_command="sudo docker-compose pull api api-migrate api-worker"
       ;;
     client)
-      run_compose_command "sudo docker-compose pull client"
+      pull_command="sudo docker-compose pull client"
       ;;
     nwsalerts)
-      run_compose_command "sudo docker-compose pull nwsalerts nwsalerts-schema"
+      pull_command="sudo docker-compose pull nwsalerts nwsalerts-schema"
       ;;
     *)
       fail "Unsupported deploy target: $target"
       ;;
   esac
+
+  attempt=1
+  max_attempts=4
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if run_compose_command_allow_failure "$pull_command"; then
+      return
+    fi
+
+    if [ "$attempt" -eq "$max_attempts" ]; then
+      fail "Image pull failed after ${max_attempts} attempts."
+    fi
+
+    info "Image pull attempt ${attempt}/${max_attempts} failed; retrying in 2s ..."
+    if uses_local_registry; then
+      ensure_local_registry
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+  done
 }
 
 run_api_schema_step() {

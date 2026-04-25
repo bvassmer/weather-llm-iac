@@ -115,6 +115,32 @@ Notes:
 - `weather-llm-api` generates embeddings in-process. Ollama on `ai-hub` is currently used for answer generation, not for weather document embeddings.
 - On first boot, `weather-llm-api` downloads the embedding model into the shared cache mounted at `NWS_EMBEDDING_CACHE_DIR`. The cache is reused by both the API and worker containers.
 - For image-based deploys, keep `PREFER_PREBUILT_IMAGES`, registry settings, and image refs in `.env` or `.env.local` so deploy and publish scripts resolve the same values.
+- Prefer an immutable `IMAGE_TAG` and derive `WEATHER_LLM_*_IMAGE` from it instead of pointing at `:latest`. The publish script and deploy wrapper already honor the same env values, so a single release tag gives you a reproducible rollout and rollback point.
+
+### Immutable Image Tags
+
+For release-style deploys on `nws`, use one unique tag for the whole publish and deploy cycle instead of reusing `:latest`.
+
+Example:
+
+```bash
+IMAGE_TAG=20260425-001
+WEATHER_LLM_API_IMAGE=${LOCAL_REGISTRY_HOST}:${LOCAL_REGISTRY_PORT}/weather-llm-api:${IMAGE_TAG}
+WEATHER_LLM_CLIENT_IMAGE=${LOCAL_REGISTRY_HOST}:${LOCAL_REGISTRY_PORT}/weather-llm-client:${IMAGE_TAG}
+WEATHER_LLM_NWSALERTS_IMAGE=${LOCAL_REGISTRY_HOST}:${LOCAL_REGISTRY_PORT}/weather-llm-nwsalerts:${IMAGE_TAG}
+```
+
+Then publish and deploy that exact tag:
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 \
+	'export IMAGE_TAG=20260425-001; sudo sh /home/pi/development/weather-stack/weather-llm-iac/scripts/publish_images_to_registry.sh'
+
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_weather_stack_pi pi@192.168.6.87 \
+	'export GITHUB_SSH_KEY_PATH=$HOME/.ssh/id_github; cd /home/pi/development/weather-stack/weather-llm-iac && sh ./scripts/deploy_nws_from_git.sh full'
+```
+
+As long as `.env` or `.env.local` on `nws` points `WEATHER_LLM_*_IMAGE` at that same `IMAGE_TAG`, the running containers are pinned to that exact published release.
 
 ### Qwen3 Considerations
 
