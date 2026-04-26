@@ -1,4 +1,5 @@
 .env
+.env.local
 .env.bak
 .env.bak.*
 .env.copilot-backup-*

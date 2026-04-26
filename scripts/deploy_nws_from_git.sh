@@ -177,21 +177,55 @@ require_healthy_mariadb() {
 run_compose_command() {
   compose_command="$1"
 
-  info "Running $compose_command"
+  info "Running sudo $compose_command"
   (
     cd "$IAC_DIR"
-    sh -c "$compose_command"
+    sudo \
+      COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE" \
+      COMPOSE_ENV_LOCAL_FILE="$COMPOSE_ENV_LOCAL_FILE" \
+      sh -eu -c '
+        if [ -f "$COMPOSE_ENV_FILE" ]; then
+          set -a
+          . "$COMPOSE_ENV_FILE"
+          set +a
+        fi
+
+        if [ -f "$COMPOSE_ENV_LOCAL_FILE" ]; then
+          set -a
+          . "$COMPOSE_ENV_LOCAL_FILE"
+          set +a
+        fi
+
+        '$compose_command'
+      '
   )
 }
 
 run_compose_command_allow_failure() {
   compose_command="$1"
 
-  info "Running $compose_command"
+  info "Running sudo $compose_command"
   set +e
   (
     cd "$IAC_DIR"
-    sh -c "$compose_command"
+    sudo \
+      COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE" \
+      COMPOSE_ENV_LOCAL_FILE="$COMPOSE_ENV_LOCAL_FILE" \
+      sh -eu -c '
+        if [ -f "$COMPOSE_ENV_FILE" ]; then
+          set -a
+          . "$COMPOSE_ENV_FILE"
+          set +a
+        fi
+
+        if [ -f "$COMPOSE_ENV_LOCAL_FILE" ]; then
+          set -a
+          . "$COMPOSE_ENV_LOCAL_FILE"
+          set +a
+        fi
+
+        '$compose_command'
+      '
   )
   status=$?
   set -e
@@ -229,7 +263,7 @@ uses_local_registry() {
 }
 
 ensure_local_registry() {
-  run_compose_command "sudo docker-compose up -d registry"
+  run_compose_command "docker-compose up -d registry"
 }
 
 pull_target_images() {
@@ -249,16 +283,16 @@ pull_target_images() {
       return
       ;;
     full)
-      pull_command="sudo docker-compose pull api api-migrate api-worker client nwsalerts nwsalerts-schema"
+      pull_command="docker-compose pull api api-migrate api-worker client nwsalerts nwsalerts-schema"
       ;;
     api)
-      pull_command="sudo docker-compose pull api api-migrate api-worker"
+      pull_command="docker-compose pull api api-migrate api-worker"
       ;;
     client)
-      pull_command="sudo docker-compose pull client"
+      pull_command="docker-compose pull client"
       ;;
     nwsalerts)
-      pull_command="sudo docker-compose pull nwsalerts nwsalerts-schema"
+      pull_command="docker-compose pull nwsalerts nwsalerts-schema"
       ;;
     *)
       fail "Unsupported deploy target: $target"
@@ -286,13 +320,13 @@ pull_target_images() {
 }
 
 run_api_schema_step() {
-  run_compose_command "sudo docker-compose up -d postgres"
-  run_compose_command "sudo docker-compose up$(build_flag) api-migrate"
+  run_compose_command "docker-compose up -d postgres"
+  run_compose_command "docker-compose up$(build_flag) api-migrate"
 }
 
 run_nwsalerts_schema_step() {
   require_healthy_mariadb
-  run_compose_command "sudo docker-compose up$(build_flag) nwsalerts-schema"
+  run_compose_command "docker-compose up$(build_flag) nwsalerts-schema"
 }
 
 run_compose() {
@@ -302,29 +336,29 @@ run_compose() {
 
   case "$target" in
     registry)
-      compose_command="sudo docker-compose up -d registry"
+      compose_command="docker-compose up -d registry"
       ;;
     full)
       pull_target_images "$target"
-      run_compose_command "sudo docker-compose up -d postgres qdrant nwsalerts-mariadb ollama-preflight"
+      run_compose_command "docker-compose up -d postgres qdrant nwsalerts-mariadb ollama-preflight"
       run_api_schema_step
       run_nwsalerts_schema_step
-      compose_command="sudo docker-compose up$(build_flag) -d api api-worker client nwsalerts"
+      compose_command="docker-compose up$(build_flag) -d api api-worker client nwsalerts"
       ;;
     api)
       pull_target_images "$target"
-      run_compose_command "sudo docker-compose up -d postgres qdrant nwsalerts-mariadb ollama-preflight"
+      run_compose_command "docker-compose up -d postgres qdrant nwsalerts-mariadb ollama-preflight"
       run_api_schema_step
-      compose_command="sudo docker-compose up -d$(build_flag) --no-deps --force-recreate api api-worker"
+      compose_command="docker-compose up -d$(build_flag) --no-deps --force-recreate api api-worker"
       ;;
     client)
       pull_target_images "$target"
-      compose_command="sudo docker-compose up -d$(build_flag) --no-deps --force-recreate client"
+      compose_command="docker-compose up -d$(build_flag) --no-deps --force-recreate client"
       ;;
     nwsalerts)
       pull_target_images "$target"
       run_nwsalerts_schema_step
-      compose_command="sudo docker-compose up -d$(build_flag) --no-deps --force-recreate nwsalerts"
+      compose_command="docker-compose up -d$(build_flag) --no-deps --force-recreate nwsalerts"
       ;;
     *)
       fail "Unsupported deploy target: $target"
