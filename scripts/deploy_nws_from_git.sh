@@ -196,7 +196,7 @@ run_compose_command() {
           set +a
         fi
 
-        '$compose_command'
+        '"$compose_command"'
       '
   )
 }
@@ -224,7 +224,7 @@ run_compose_command_allow_failure() {
           set +a
         fi
 
-        '$compose_command'
+        '"$compose_command"'
       '
   )
   status=$?
