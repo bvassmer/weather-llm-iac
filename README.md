@@ -149,6 +149,35 @@ As long as `.env` or `.env.local` on `nws` points `WEATHER_LLM_*_IMAGE` at that 
 - Current weather services use conservative temperatures for deterministic behavior. This maps to Qwen3 non-thinking style usage.
 - If you introduce explicit Qwen3 thinking-mode behavior later, update API-side generation settings to Qwen3-appropriate sampling values rather than reusing the current cold defaults.
 
+### Weather email summaries
+
+`NWS_OUTLOOK_SUMMARY_MODE` defaults to `legacy`. Use `compact` for summaries with validated local facts and `facts-only` to render facts without inference. `NWS_OUTLOOK_SUMMARY_MODEL` is the email model override. Leave it empty to inherit `OLLAMA_CHAT_MODEL`.
+
+Before selecting `qwen3:4b`, check the live catalog and installed tags from `nws`:
+
+```bash
+curl -fsS --max-time 10 http://192.168.7.176:11434/api/version
+curl -fsS --max-time 10 http://192.168.7.176:11434/hailo/v1/list
+curl -fsS --max-time 10 http://192.168.7.176:11434/api/tags
+```
+
+On `ai-hub`, check the installed packages with `dpkg-query -W hailort hailort-pcie-driver hailo-gen-ai-model-zoo`. If an upgrade is needed, stage matching Hailo 5.5.0 runtime, PCIe driver, and GenAI packages for the Pi, with a recoverable boot environment. After the runtime exposes `qwen3:4b` in its catalog, pull that exact tag and confirm it appears in `/api/tags`. Run the compact benchmark on the AI HAT+ 2 and verify accuracy, latency, and fallback behavior in the no-send weather email preview before promotion. [Hailo GenAI release notes](https://github.com/hailo-ai/hailo_model_zoo_genai/blob/main/docs/CHANGELOG.rst)
+
+Publish the API and ingestion images from GitHub and deploy both in legacy mode
+before staging the candidate. Set `NWS_OUTLOOK_SUMMARY_MODEL=qwen3:4b` in
+`/home/pi/development/weather-stack/weather-llm-iac/.env.local` on `nws` and
+recreate the API. The compact preview and the [30-case holdout](../nwsAlerts/README.md)
+can now exercise the candidate while scheduled emails run in legacy mode.
+
+After the holdout passes, use these values in the same file:
+
+```dotenv
+NWS_OUTLOOK_SUMMARY_MODE=compact
+NWS_OUTLOOK_SUMMARY_MODEL=qwen3:4b
+```
+
+Follow the GitHub-first image publish flow below for code changes. Apply the runtime configuration with `sh ./scripts/deploy_nws_from_git.sh api` first, then `sh ./scripts/deploy_nws_from_git.sh nwsalerts` once MariaDB is healthy. Confirm that the summary endpoint reports `qwen3:4b` for a case that uses inference and that dashboard chat still responds. To roll back, set the email model to the validated `qwen3:1.7b` configuration or select `facts-only`, then apply the same targeted deploys.
+
 ## First-time deployment
 
 ### 1. Prepare `ai-hub`
